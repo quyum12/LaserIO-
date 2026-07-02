@@ -100,7 +100,11 @@ public class MekanismCache {
             IChemicalHandler<?, ?> chemicalHandler = entry.getValue().resolve().get();
             if (!MekanismStatics.isValidChemicalForHandler(chemicalHandler, testStack)) continue;
 
-            for (int tank = 0; tank < chemicalHandler.getTanks(); tank++) {
+            int tanks = chemicalHandler.getTanks();
+            for (int tank = 0; tank < tanks; tank++) {
+                if (tank >= 27) {
+                    throw new IllegalStateException("LaserIO incremental slot overflow");
+                }
                 ChemicalStack<?> stackInTank = chemicalHandler.getChemicalInTank(tank);
                 if (new ChemicalStackKey(testStack).equals(new ChemicalStackKey(stackInTank))) {
                     if (filter.getItem() instanceof FilterCount) {
@@ -170,7 +174,11 @@ public class MekanismCache {
         for (ChemicalStack<?> chemicalStack : filteredChemicalsList) { //Iterate the list of filtered items for extracting purposes
             int desiredAmt = stockerCardCache.mekanismCardCache.getFilterAmt(chemicalStack);
             int amtHad = 0;
-            for (int tank = 0; tank < stockerTank.getTanks(); tank++) { //Loop through all the tanks
+            int tanks = stockerTank.getTanks();
+            for (int tank = 0; tank < tanks; tank++) { //Loop through all the tanks
+                if (tank >= 27) {
+                    throw new IllegalStateException("LaserIO incremental slot overflow");
+                }
                 ChemicalStack<?> stackInTank = stockerTank.getChemicalInTank(tank);
                 if (new ChemicalStackKey(chemicalStack).equals(new ChemicalStackKey(stackInTank)))
                     amtHad += stackInTank.getAmount();
@@ -205,8 +213,12 @@ public class MekanismCache {
             return false;
 
         if (isCount) { //If this is a filter count, prune the list of items to search for to just what we need
+            int tanks = stockerTank.getTanks();
             for (ChemicalStack<?> chemicalStack : filteredChemicalsList) { //Remove all the items from the list that we already have enough of
-                for (int tank = 0; tank < stockerTank.getTanks(); tank++) {
+                for (int tank = 0; tank < tanks; tank++) {
+                    if (tank >= 27) {
+                        throw new IllegalStateException("LaserIO incremental slot overflow");
+                    }
                     ChemicalStack<?> tankStack = stockerTank.getChemicalInTank(tank);
                     if (tankStack.isEmpty() || new ChemicalStackKey(chemicalStack).equals(new ChemicalStackKey(tankStack))) {
                         int filterAmt = stockerCardCache.mekanismCardCache.getFilterAmt(chemicalStack);
@@ -292,11 +304,14 @@ public class MekanismCache {
             int tanks = chemicalHandler.getTanks();
             if (tanks == 0) continue;
 
-            if (extractorCardCache.currentSlot >= tanks) {
+            if (extractorCardCache.currentSlot < 0 || extractorCardCache.currentSlot >= tanks) {
                 extractorCardCache.currentSlot = 0;
             }
 
             int tank = extractorCardCache.currentSlot;
+            if (tank >= 27) {
+                throw new IllegalStateException("LaserIO incremental slot overflow");
+            }
             ChemicalStack<?> chemicalStack = chemicalHandler.getChemicalInTank(tank);
             if (!chemicalStack.isEmpty() && extractorCardCache.mekanismCardCache.isStackValidForCard(chemicalStack)) {
                 ChemicalStack<?> extractStack = chemicalStack.copy();
@@ -365,7 +380,11 @@ public class MekanismCache {
 
             if (inserterCardCache.filterCard.getItem() instanceof FilterCount) {
                 int filterCount = inserterCardCache.mekanismCardCache.getFilterAmt(extractStack);
-                for (int tank = 0; tank < handler.getTanks(); tank++) {
+                int tanks = handler.getTanks();
+                for (int tank = 0; tank < tanks; tank++) {
+                    if (tank >= 27) {
+                        throw new IllegalStateException("LaserIO incremental slot overflow");
+                    }
                     ChemicalStack<?> chemicalStack = handler.getChemicalInTank(tank);
                     if (chemicalStack.isEmpty() || new ChemicalStackKey(chemicalStack).equals(new ChemicalStackKey(extractStack))) {
                         long currentAmt = chemicalStack.getAmount();
