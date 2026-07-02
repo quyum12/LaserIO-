@@ -426,21 +426,30 @@ public class LaserNodeBE extends BaseLaserBE {
             }
             case PICK_SIDE -> {
                 currentSideIndex++;
-                if (currentSideIndex >= 6) currentSideIndex = 0;
+                if (currentSideIndex < 0 || currentSideIndex >= 6) currentSideIndex = 0;
                 currentPhase = Phase.PICK_CARD;
                 didWork = true;
             }
             case PICK_CARD -> {
-                NodeSideCache nodeSideCache = nodeSideCaches[currentSideIndex];
-                if (nodeSideCache.extractorCardCaches.isEmpty()) {
+                if (currentSideIndex < 0 || currentSideIndex >= 6) {
+                    currentSideIndex = 0;
                     currentPhase = Phase.PICK_SIDE;
                 } else {
-                    if (nodeSideCache.nextCardIndex >= nodeSideCache.extractorCardCaches.size()) {
-                        nodeSideCache.nextCardIndex = 0;
+                    NodeSideCache nodeSideCache = nodeSideCaches[currentSideIndex];
+                    int cardCount = nodeSideCache.extractorCardCaches.size();
+                    if (cardCount == 0) {
+                        currentPhase = Phase.PICK_SIDE;
+                    } else {
+                        if (nodeSideCache.nextCardIndex < 0 || nodeSideCache.nextCardIndex >= cardCount) {
+                            nodeSideCache.nextCardIndex = 0;
+                        }
+                        currentCard = nodeSideCache.extractorCardCaches.get(nodeSideCache.nextCardIndex);
+                        nodeSideCache.nextCardIndex++;
+                        if (nodeSideCache.nextCardIndex >= cardCount) {
+                            nodeSideCache.nextCardIndex = 0;
+                        }
+                        currentPhase = currentCard instanceof SensorCardCache ? Phase.SENSE : Phase.TRANSFER;
                     }
-                    currentCard = nodeSideCache.extractorCardCaches.get(nodeSideCache.nextCardIndex);
-                    nodeSideCache.nextCardIndex++;
-                    currentPhase = currentCard instanceof SensorCardCache ? Phase.SENSE : Phase.TRANSFER;
                 }
                 didWork = true;
             }
@@ -837,6 +846,13 @@ public class LaserNodeBE extends BaseLaserBE {
     }
 
     public boolean extractItem(ExtractorCardCache extractorCardCache, IItemHandler fromInventory, ItemStack extractStack, int startSlot) {
+        if (startSlot < 0 || startSlot >= fromInventory.getSlots()) {
+            extractorCardCache.currentSlot = 0;
+            return false;
+        }
+        if (startSlot >= 27) {
+            throw new IllegalStateException("LaserIO incremental slot overflow");
+        }
         if (extractorCardCache.currentStep == ExtractorCardCache.TransferStep.SCAN_SLOTS) {
             // Atomic operation: check ONE slot for extraction
             ItemStack stackInSlot = fromInventory.getStackInSlot(startSlot);
@@ -868,7 +884,9 @@ public class LaserNodeBE extends BaseLaserBE {
                 extractorCardCache.cachedPossibleInserters = inserterCardCaches;
             }
 
-            if (extractorCardCache.currentInserterIndex >= extractorCardCache.cachedPossibleInserters.size()) {
+            int inserterCount = extractorCardCache.cachedPossibleInserters.size();
+            if (extractorCardCache.currentInserterIndex < 0 || extractorCardCache.currentInserterIndex >= inserterCount) {
+                extractorCardCache.currentInserterIndex = 0;
                 // Done scanning inserters, check if we found enough
                 int amtFound = 0;
                 for (TransferResult.Result res : extractorCardCache.currentTransferResult.results) {
@@ -896,8 +914,11 @@ public class LaserNodeBE extends BaseLaserBE {
 
                 // Atomic insert check: check ONE slot in the inserter's inventory
                 int slots = laserNodeItemHandler.handler.getSlots();
-                if (extractorCardCache.currentInserterSlot >= slots) {
+                if (extractorCardCache.currentInserterSlot < 0 || extractorCardCache.currentInserterSlot >= slots) {
                     extractorCardCache.currentInserterSlot = 0;
+                }
+                if (extractorCardCache.currentInserterSlot >= 27) {
+                    throw new IllegalStateException("LaserIO incremental slot overflow");
                 }
 
                 int insSlot = extractorCardCache.currentInserterSlot;
@@ -927,7 +948,9 @@ public class LaserNodeBE extends BaseLaserBE {
 
         if (extractorCardCache.currentStep == ExtractorCardCache.TransferStep.EXECUTE_TRANSFER) {
             // Execution is also incremental: one result per tick
-            if (extractorCardCache.currentResultIndex >= extractorCardCache.currentTransferResult.results.size()) {
+            int resultCount = extractorCardCache.currentTransferResult.results.size();
+            if (extractorCardCache.currentResultIndex < 0 || extractorCardCache.currentResultIndex >= resultCount) {
+                extractorCardCache.currentResultIndex = 0;
                 extractorCardCache.currentStep = ExtractorCardCache.TransferStep.SCAN_SLOTS;
                 extractorCardCache.extractingStack = ItemStack.EMPTY;
                 extractorCardCache.currentTransferResult = new TransferResult();
@@ -1006,7 +1029,8 @@ public class LaserNodeBE extends BaseLaserBE {
         if (filteredItemsList.isEmpty()) return false;
 
         // Atomic sensing: check ONE item from the filter
-        if (sensorCardCache.currentFilterIndex >= filteredItemsList.size()) {
+        int filterSize = filteredItemsList.size();
+        if (sensorCardCache.currentFilterIndex < 0 || sensorCardCache.currentFilterIndex >= filterSize) {
             sensorCardCache.currentFilterIndex = 0;
         }
 
@@ -1053,7 +1077,8 @@ public class LaserNodeBE extends BaseLaserBE {
         List<FluidStack> filteredFluids = sensorCardCache.getFilteredFluids();
         if (filteredFluids.isEmpty()) return false;
 
-        if (sensorCardCache.currentFilterIndex >= filteredFluids.size()) {
+        int filterSize = filteredFluids.size();
+        if (sensorCardCache.currentFilterIndex < 0 || sensorCardCache.currentFilterIndex >= filterSize) {
             sensorCardCache.currentFilterIndex = 0;
         }
 
@@ -1063,7 +1088,11 @@ public class LaserNodeBE extends BaseLaserBE {
         // Atomic sensing: check all tanks for ONE fluid from the filter
         // Actually checking all tanks might be O(N_tanks). If tanks are many, we should incrementalize tanks too.
         // For standard fluid containers, tanks are few.
-        for (int tank = 0; tank < adjacentTank.getTanks(); tank++) {
+        int tanks = adjacentTank.getTanks();
+        for (int tank = 0; tank < tanks; tank++) {
+            if (tank >= 27) {
+                throw new IllegalStateException("LaserIO incremental slot overflow");
+            }
             FluidStack stackInTank = adjacentTank.getFluidInTank(tank);
             if (stackInTank.isFluidEqual(testStack)) {
                 if (filter.getItem() instanceof FilterCount) {
@@ -1128,17 +1157,25 @@ public class LaserNodeBE extends BaseLaserBE {
         assert level != null;
         if (!level.isLoaded(adjacentPos)) return false;
         IItemHandler adjacentInventory = getAttachedInventory(extractorCardCache.direction, extractorCardCache.sneaky).orElse(EMPTY);
-        if (adjacentInventory.getSlots() == 0) return false;
+        int slots = adjacentInventory.getSlots();
+        if (slots == 0) return false;
 
         // Reset if we are starting a new scan
         if (extractorCardCache.currentStep == ExtractorCardCache.TransferStep.SCAN_SLOTS && extractorCardCache.extractingStack.isEmpty()) {
-            if (extractorCardCache.currentSlot >= adjacentInventory.getSlots()) {
+            if (extractorCardCache.currentSlot < 0 || extractorCardCache.currentSlot >= slots) {
                 extractorCardCache.currentSlot = 0;
             }
         }
 
         // Atomic operation: check ONE slot
         int slot = extractorCardCache.currentSlot;
+        if (slot < 0 || slot >= slots) {
+            extractorCardCache.currentSlot = 0;
+            return false;
+        }
+        if (slot >= 27) {
+            throw new IllegalStateException("LaserIO incremental slot overflow");
+        }
         ItemStack stackInSlot = adjacentInventory.getStackInSlot(slot);
 
         if (!stackInSlot.isEmpty() && extractorCardCache.isStackValidForCard(stackInSlot)) {
@@ -1173,7 +1210,7 @@ public class LaserNodeBE extends BaseLaserBE {
         }
 
         extractorCardCache.currentSlot++;
-        if (extractorCardCache.currentSlot >= adjacentInventory.getSlots()) {
+        if (extractorCardCache.currentSlot >= slots) {
             extractorCardCache.currentSlot = 0;
             // We finished scanning all slots and found nothing this tick (or we would have returned true above)
             return false;
@@ -1200,7 +1237,11 @@ public class LaserNodeBE extends BaseLaserBE {
             IFluidHandler handler = laserNodeFluidHandler.handler;
             if (inserterCardCache.filterCard.getItem() instanceof FilterCount) {
                 int filterCount = inserterCardCache.getFilterAmt(extractStack);
-                for (int tank = 0; tank < handler.getTanks(); tank++) {
+                int tanks = handler.getTanks();
+                for (int tank = 0; tank < tanks; tank++) {
+                    if (tank >= 27) {
+                        throw new IllegalStateException("LaserIO incremental slot overflow");
+                    }
                     FluidStack fluidStack = handler.getFluidInTank(tank);
                     if (fluidStack.isEmpty() || fluidStack.isFluidEqual(extractStack)) {
                         int currentAmt = fluidStack.getAmount();
@@ -1324,13 +1365,17 @@ public class LaserNodeBE extends BaseLaserBE {
         LazyOptional<IFluidHandler> adjacentTankOptional = getAttachedFluidTank(extractorCardCache.direction, extractorCardCache.sneaky);
         if (!adjacentTankOptional.isPresent()) return false;
         IFluidHandler adjacentTank = adjacentTankOptional.resolve().get();
-        if (adjacentTank.getTanks() == 0) return false;
+        int tanks = adjacentTank.getTanks();
+        if (tanks == 0) return false;
 
-        if (extractorCardCache.currentSlot >= adjacentTank.getTanks()) {
+        if (extractorCardCache.currentSlot < 0 || extractorCardCache.currentSlot >= tanks) {
             extractorCardCache.currentSlot = 0;
         }
 
         int tank = extractorCardCache.currentSlot;
+        if (tank >= 27) {
+            throw new IllegalStateException("LaserIO incremental slot overflow");
+        }
         FluidStack fluidStack = adjacentTank.getFluidInTank(tank);
         if (!fluidStack.isEmpty() && extractorCardCache.isStackValidForCard(fluidStack)) {
             FluidStack extractStack = fluidStack.copy();
@@ -1371,7 +1416,7 @@ public class LaserNodeBE extends BaseLaserBE {
         }
 
         extractorCardCache.currentSlot++;
-        if (extractorCardCache.currentSlot >= adjacentTank.getTanks()) {
+        if (extractorCardCache.currentSlot >= tanks) {
             extractorCardCache.currentSlot = 0;
             return false;
         }
@@ -1380,9 +1425,11 @@ public class LaserNodeBE extends BaseLaserBE {
 
     public int receiveEnergy(Direction direction, int receiveAmt, boolean simulate) {
         NodeSideCache nodeSideCache = nodeSideCaches[direction.ordinal()];
-        if (nodeSideCache.nextCardIndex >= nodeSideCache.extractorCardCaches.size()) {
+        int cardCount = nodeSideCache.extractorCardCaches.size();
+        if (nodeSideCache.nextCardIndex < 0 || nodeSideCache.nextCardIndex >= cardCount) {
             nodeSideCache.nextCardIndex = 0;
         }
+        if (cardCount == 0) return 0;
 
         // Just check one card for receiveEnergy per call to keep it bounded
         ExtractorCardCache extractorCardCache = nodeSideCache.extractorCardCaches.get(nodeSideCache.nextCardIndex);
@@ -1466,7 +1513,9 @@ public class LaserNodeBE extends BaseLaserBE {
         }
 
         if (extractorCardCache.currentStep == ExtractorCardCache.TransferStep.SCAN_INSERTERS) {
-            if (extractorCardCache.currentInserterIndex >= extractorCardCache.cachedPossibleInserters.size()) {
+            int inserterCount = extractorCardCache.cachedPossibleInserters.size();
+            if (extractorCardCache.currentInserterIndex < 0 || extractorCardCache.currentInserterIndex >= inserterCount) {
+                extractorCardCache.currentInserterIndex = 0;
                 extractorCardCache.currentStep = ExtractorCardCache.TransferStep.SCAN_SLOTS;
                 return false;
             }
@@ -1626,7 +1675,11 @@ public class LaserNodeBE extends BaseLaserBE {
         for (FluidStack fluidStack : filteredFluidsList) { //Iterate the list of filtered items for extracting purposes
             int desiredAmt = stockerCardCache.getFilterAmt(fluidStack);
             int amtHad = 0;
-            for (int tank = 0; tank < stockerTank.getTanks(); tank++) { //Loop through all the tanks
+            int tanks = stockerTank.getTanks();
+            for (int tank = 0; tank < tanks; tank++) { //Loop through all the tanks
+                if (tank >= 27) {
+                    throw new IllegalStateException("LaserIO incremental slot overflow");
+                }
                 FluidStack stackInTank = stockerTank.getFluidInTank(tank);
                 if (stackInTank.isFluidEqual(fluidStack)) {
                     amtHad += stackInTank.getAmount();
@@ -1749,7 +1802,9 @@ public class LaserNodeBE extends BaseLaserBE {
 
         if (stockerCardCache.currentStep == ExtractorCardCache.TransferStep.SCAN_FILTER) {
             List<ItemStack> filteredItems = stockerCardCache.getFilteredItems();
-            if (stockerCardCache.currentFilterIndex >= filteredItems.size()) {
+            int filterSize = filteredItems.size();
+            if (stockerCardCache.currentFilterIndex < 0 || stockerCardCache.currentFilterIndex >= filterSize) {
+                stockerCardCache.currentFilterIndex = 0;
                 stockerCardCache.currentStep = ExtractorCardCache.TransferStep.SCAN_SLOTS;
                 stockerCardCache.currentFilterIndex = 0;
                 return false; // Done scanning all filters
@@ -1830,13 +1885,22 @@ public class LaserNodeBE extends BaseLaserBE {
                 return false;
             }
 
+            int inserterCount = stockerCardCache.cachedPossibleInserters.size();
+            if (stockerCardCache.currentInserterIndex < 0 || stockerCardCache.currentInserterIndex >= inserterCount) {
+                stockerCardCache.currentInserterIndex = 0;
+                stockerCardCache.currentStep = ExtractorCardCache.TransferStep.SCAN_FILTER;
+                return false;
+            }
             InserterCardCache inserterCardCache = stockerCardCache.cachedPossibleInserters.get(stockerCardCache.currentInserterIndex);
             if (inserterCardCache.isStackValidForCard(stockerCardCache.extractingStack)) {
                 LaserNodeItemHandler laserNodeItemHandler = getLaserNodeHandlerItem(inserterCardCache);
                 if (laserNodeItemHandler != null) {
                     int slots = laserNodeItemHandler.handler.getSlots();
-                    if (stockerCardCache.currentInserterSlot >= slots) {
+                    if (stockerCardCache.currentInserterSlot < 0 || stockerCardCache.currentInserterSlot >= slots) {
                         stockerCardCache.currentInserterSlot = 0;
+                    }
+                    if (stockerCardCache.currentInserterSlot >= 27) {
+                        throw new IllegalStateException("LaserIO incremental slot overflow");
                     }
 
                     int insSlot = stockerCardCache.currentInserterSlot;
@@ -1999,8 +2063,12 @@ public class LaserNodeBE extends BaseLaserBE {
             return false;
 
         if (isCount) { //If this is a filter count, prune the list of items to search for to just what we need
+            int tanks = stockerTank.getTanks();
             for (FluidStack fluidStack : filteredFluidsList) { //Remove all the items from the list that we already have enough of
-                for (int tank = 0; tank < stockerTank.getTanks(); tank++) {
+                for (int tank = 0; tank < tanks; tank++) {
+                    if (tank >= 27) {
+                        throw new IllegalStateException("LaserIO incremental slot overflow");
+                    }
                     FluidStack tankStack = stockerTank.getFluidInTank(tank);
                     if (tankStack.isEmpty() || tankStack.isFluidEqual(fluidStack)) {
                         int filterAmt = stockerCardCache.getFilterAmt(fluidStack);
@@ -2660,7 +2728,11 @@ public class LaserNodeBE extends BaseLaserBE {
         redstoneCardSides.clear();
         for (Direction direction : Direction.values()) {
             IItemHandler itemHandler = getCapability(ForgeCapabilities.ITEM_HANDLER, direction).orElse(new ItemStackHandler(0));
-            for (int slot = 0; slot < itemHandler.getSlots(); slot++) {
+            int slots = itemHandler.getSlots();
+            for (int slot = 0; slot < slots; slot++) {
+                if (slot >= 27) {
+                    throw new IllegalStateException("LaserIO incremental slot overflow");
+                }
                 ItemStack card = itemHandler.getStackInSlot(slot);
                 Item cardItem = card.getItem();
                 if (!(cardItem instanceof BaseCard)) {
@@ -2740,7 +2812,7 @@ public class LaserNodeBE extends BaseLaserBE {
 
     public InventoryCardCounts getNodeContents() {
         InventoryCardCounts nodeContents = new InventoryCardCounts();
-        for (int i = 0; i < Direction.values().length; i++) {
+        for (int i = 0; i < 6; i++) {
             nodeContents.addHandler(nodeSideCaches[i].itemHandler);
         }
         return nodeContents;
@@ -2812,7 +2884,7 @@ public class LaserNodeBE extends BaseLaserBE {
 
     @Override
     public void load(CompoundTag tag) {
-        for (int i = 0; i < Direction.values().length; i++) {
+        for (int i = 0; i < 6; i++) {
             NodeSideCache nodeSideCache = nodeSideCaches[i];
             if (tag.contains("Inventory" + i)) {
                 nodeSideCache.itemHandler.deserializeNBT(tag.getCompound("Inventory" + i));
@@ -2833,7 +2905,7 @@ public class LaserNodeBE extends BaseLaserBE {
     @Override
     public void saveAdditional(CompoundTag tag) {
         super.saveAdditional(tag);
-        for (int i = 0; i < Direction.values().length; i++) {
+        for (int i = 0; i < 6; i++) {
             NodeSideCache nodeSideCache = nodeSideCaches[i];
             tag.put("Inventory" + i, nodeSideCache.itemHandler.serializeNBT());
         }
