@@ -18,6 +18,7 @@ public class NodeSideCache {
     public int overclockers;
     public final List<ExtractorCardCache> extractorCardCaches = new CopyOnWriteArrayList<>();
     public Byte2ByteMap myRedstoneFromSensors = new Byte2ByteOpenHashMap();  //Channel,Strength
+    public int nextCardIndex = 0;
 
     public NodeSideCache() {
 
