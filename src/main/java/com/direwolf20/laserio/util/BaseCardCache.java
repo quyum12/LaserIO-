@@ -62,11 +62,11 @@ public class BaseCardCache {
     public final boolean isCompareNBT;
     public final Map<ItemStackKey, Boolean> filterCache = new Object2BooleanOpenHashMap<>();
     public final Map<ItemStackKey, Integer> filterCounts = new Object2IntOpenHashMap<>();
-    private final ItemStackKey lookupKey = new ItemStackKey();
+    protected final ItemStackKey lookupKey = new ItemStackKey();
     //Fluids
     public final Map<FluidStackKey, Boolean> filterCacheFluid = new Object2BooleanOpenHashMap<>();
     public final Map<FluidStackKey, Integer> filterCountsFluid = new Object2IntOpenHashMap<>();
-    private final FluidStackKey lookupKeyFluid = new FluidStackKey();
+    protected final FluidStackKey lookupKeyFluid = new FluidStackKey();
     //Mekanism chemicals
     public MekanismCardCache mekanismCardCache;
 
@@ -137,6 +137,14 @@ public class BaseCardCache {
                 enabled = true;
             }
         }
+    }
+
+    public ItemStackKey getLookupKey() {
+        return lookupKey;
+    }
+
+    public FluidStackKey getLookupKeyFluid() {
+        return lookupKeyFluid;
     }
 
     public int getFilterAmt(ItemStack testStack) {

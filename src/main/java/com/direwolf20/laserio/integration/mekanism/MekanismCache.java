@@ -75,123 +75,57 @@ public class MekanismCache {
         NodeSideCache nodeSideCache = laserNodeBE.nodeSideCaches[sensorCardCache.direction.ordinal()];
         Map<ChemicalType, LazyOptional<IChemicalHandler<?, ?>>> chemicalHandlerMap = getAttachedChemicalTanks(sensorCardCache.direction, sensorCardCache.sneaky);
         if (chemicalHandlerMap == null || chemicalHandlerMap.isEmpty()) {
-            if (laserNodeBE.updateRedstoneFromSensor(false, sensorCardCache.redstoneChannel, nodeSideCache)) {
-                laserNodeBE.rendersChecked = false;
-                laserNodeBE.clearCachedInventories();
-                laserNodeBE.redstoneChecked = false;
-            }
+            laserNodeBE.updateRedstoneFromSensor(false, sensorCardCache.redstoneChannel, nodeSideCache);
             return false;
         }
 
         ItemStack filter = sensorCardCache.filterCard;
-        boolean andMode = BaseCard.getAnd(sensorCardCache.cardItem);
-        boolean filterMatched = false;
-
-        if (filter.isEmpty()) { //Needs a filter
-            if (laserNodeBE.updateRedstoneFromSensor(false, sensorCardCache.redstoneChannel, nodeSideCache)) {
-                laserNodeBE.rendersChecked = false;
-                laserNodeBE.clearCachedInventories();
-                laserNodeBE.redstoneChecked = false;
-            }
+        if (filter.isEmpty()) {
+            laserNodeBE.updateRedstoneFromSensor(false, sensorCardCache.redstoneChannel, nodeSideCache);
             return false;
         }
-        if (filter.getItem() instanceof FilterBasic) {
-            List<ChemicalStack<?>> filteredChemicals = sensorCardCache.mekanismCardCache.getFilteredChemicals();
-            List<ChemicalStack<?>> filteredChemicalsOriginal = new ArrayList<>(filteredChemicals);
 
-            outloop:
-            for (Map.Entry<ChemicalType, LazyOptional<IChemicalHandler<?, ?>>> entry : chemicalHandlerMap.entrySet()) {
-                if (!entry.getValue().isPresent())
-                    continue;
+        List<ChemicalStack<?>> filteredChemicals = sensorCardCache.mekanismCardCache.getFilteredChemicals();
+        if (filteredChemicals.isEmpty()) return false;
 
-                IChemicalHandler<?, ?> chemicalHandler = entry.getValue().resolve().get();
-                for (ChemicalStack<?> chemicalStack : filteredChemicalsOriginal) {
-                    if (!MekanismStatics.isValidChemicalForHandler(chemicalHandler, chemicalStack))
-                        continue; //Don't check Gas's against the pigments handler
-                    for (int tank = 0; tank < chemicalHandler.getTanks(); tank++) { //Loop through all the tanks
-                        ChemicalStack<?> stackInTank = chemicalHandler.getChemicalInTank(tank);
-                        if (new ChemicalStackKey(chemicalStack).equals(new ChemicalStackKey(stackInTank))) {
-                            filteredChemicals.remove(chemicalStack);
-                            if (!andMode) {
-                                break outloop;
-                            }
-                        }
-                    }
-                }
-            }
-            if (andMode)
-                filterMatched = filteredChemicals.size() == 0;
-            else
-                filterMatched = filteredChemicals.size() < filteredChemicalsOriginal.size();
-        } else if (filter.getItem() instanceof FilterCount) {
-            List<ChemicalStack<?>> filteredChemicals = sensorCardCache.mekanismCardCache.getFilteredChemicals();
-            List<ChemicalStack<?>> filteredChemicalsOriginal = new ArrayList<>(filteredChemicals);
-
-            outloop:
-            for (Map.Entry<ChemicalType, LazyOptional<IChemicalHandler<?, ?>>> entry : chemicalHandlerMap.entrySet()) {
-                if (!entry.getValue().isPresent())
-                    continue;
-
-                IChemicalHandler<?, ?> chemicalHandler = entry.getValue().resolve().get();
-                for (ChemicalStack<?> chemicalStack : filteredChemicalsOriginal) {
-                    if (!MekanismStatics.isValidChemicalForHandler(chemicalHandler, chemicalStack))
-                        continue; //Don't check Gas's against the pigments handler
-                    int desiredAmt = sensorCardCache.mekanismCardCache.getFilterAmt(chemicalStack);
-                    for (int tank = 0; tank < chemicalHandler.getTanks(); tank++) { //Loop through all the tanks
-                        ChemicalStack<?> stackInTank = chemicalHandler.getChemicalInTank(tank);
-                        if (new ChemicalStackKey(chemicalStack).equals(new ChemicalStackKey(stackInTank))) {
-                            long amtHad = stackInTank.getAmount();
-                            if (amtHad < desiredAmt || (sensorCardCache.exact && amtHad > desiredAmt)) {
-                                //noOp
-                            } else {
-                                filteredChemicals.remove(chemicalStack);
-                                if (!andMode) {
-                                    break outloop;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if (andMode)
-                filterMatched = filteredChemicals.size() == 0;
-            else
-                filterMatched = filteredChemicals.size() < filteredChemicalsOriginal.size();
-        } else if (filter.getItem() instanceof FilterTag) {
-            List<String> tags = sensorCardCache.getFilterTags();
-            int tagsToMatch = tags.size();
-
-            outloop:
-            for (Map.Entry<ChemicalType, LazyOptional<IChemicalHandler<?, ?>>> entry : chemicalHandlerMap.entrySet()) {
-                if (!entry.getValue().isPresent())
-                    continue;
-
-                IChemicalHandler<?, ?> chemicalHandler = entry.getValue().resolve().get();
-                for (int tank = 0; tank < chemicalHandler.getTanks(); tank++) { //Loop through all the tanks
-                    ChemicalStack<?> stackInTank = chemicalHandler.getChemicalInTank(tank);
-                    for (TagKey tagKey : stackInTank.getType().getTags().toList()) {
-                        String chemicalTag = tagKey.location().toString().toLowerCase(Locale.ROOT);
-                        if (tags.contains(chemicalTag)) {
-                            tags.remove(chemicalTag);
-                            if (!andMode) {
-                                break outloop;
-                            }
-                        }
-                    }
-                }
-            }
-            //In and mode, the list of tags needs to be empty, in or mode it just has to be 1 smaller.
-            if (andMode)
-                filterMatched = tags.size() == 0;
-            else
-                filterMatched = tags.size() < tagsToMatch;
+        if (sensorCardCache.currentFilterIndex >= filteredChemicals.size()) {
+            sensorCardCache.currentFilterIndex = 0;
         }
+
+        ChemicalStack<?> testStack = filteredChemicals.get(sensorCardCache.currentFilterIndex);
+        boolean filterMatched = false;
+
+        for (Map.Entry<ChemicalType, LazyOptional<IChemicalHandler<?, ?>>> entry : chemicalHandlerMap.entrySet()) {
+            if (!entry.getValue().isPresent()) continue;
+            IChemicalHandler<?, ?> chemicalHandler = entry.getValue().resolve().get();
+            if (!MekanismStatics.isValidChemicalForHandler(chemicalHandler, testStack)) continue;
+
+            for (int tank = 0; tank < chemicalHandler.getTanks(); tank++) {
+                ChemicalStack<?> stackInTank = chemicalHandler.getChemicalInTank(tank);
+                if (new ChemicalStackKey(testStack).equals(new ChemicalStackKey(stackInTank))) {
+                    if (filter.getItem() instanceof FilterCount) {
+                        int desiredAmt = sensorCardCache.mekanismCardCache.getFilterAmt(testStack);
+                        long amtHad = stackInTank.getAmount();
+                        if (amtHad >= desiredAmt && (!sensorCardCache.exact || amtHad <= desiredAmt)) {
+                            filterMatched = true;
+                            break;
+                        }
+                    } else {
+                        filterMatched = true;
+                        break;
+                    }
+                }
+            }
+            if (filterMatched) break;
+        }
+
         if (laserNodeBE.updateRedstoneFromSensor(filterMatched, sensorCardCache.redstoneChannel, nodeSideCache)) {
-            //System.out.println("Redstone network change detected");
             laserNodeBE.rendersChecked = false;
             laserNodeBE.clearCachedInventories();
             laserNodeBE.redstoneChecked = false;
         }
+
+        sensorCardCache.currentFilterIndex++;
         return true;
     }
 
@@ -349,36 +283,66 @@ public class MekanismCache {
         Map<ChemicalType, LazyOptional<IChemicalHandler<?, ?>>> chemicalHandlerMap = getAttachedChemicalTanks(extractorCardCache.direction, extractorCardCache.sneaky);
         if (chemicalHandlerMap == null || chemicalHandlerMap.isEmpty()) return false;
 
+        // Simplified incremental chemical scan
         for (Map.Entry<ChemicalType, LazyOptional<IChemicalHandler<?, ?>>> entry : chemicalHandlerMap.entrySet()) {
             if (!entry.getValue().isPresent())
                 continue;
 
             IChemicalHandler<?, ?> chemicalHandler = entry.getValue().resolve().get();
-            for (int tank = 0; tank < chemicalHandler.getTanks(); tank++) {
-                ChemicalStack<?> chemicalStack = chemicalHandler.getChemicalInTank(tank);
-                if (chemicalStack.isEmpty() || !extractorCardCache.mekanismCardCache.isStackValidForCard(chemicalStack))
-                    continue;
+            int tanks = chemicalHandler.getTanks();
+            if (tanks == 0) continue;
+
+            if (extractorCardCache.currentSlot >= tanks) {
+                extractorCardCache.currentSlot = 0;
+            }
+
+            int tank = extractorCardCache.currentSlot;
+            ChemicalStack<?> chemicalStack = chemicalHandler.getChemicalInTank(tank);
+            if (!chemicalStack.isEmpty() && extractorCardCache.mekanismCardCache.isStackValidForCard(chemicalStack)) {
                 ChemicalStack<?> extractStack = chemicalStack.copy();
                 extractStack.setAmount(extractorCardCache.extractAmt);
 
-                if (extractorCardCache.filterCard.getItem() instanceof FilterCount) { //If this is a count filter, only try to extract up to the amount in the filter
+                if (extractorCardCache.filterCard.getItem() instanceof FilterCount) {
                     int filterCount = extractorCardCache.mekanismCardCache.getFilterAmt(extractStack);
-                    if (filterCount <= 0) continue; //This should never happen in theory...
-                    long amtInInv = chemicalStack.getAmount();
-                    long amtAllowedToRemove = amtInInv - filterCount;
-                    if (amtAllowedToRemove <= 0) continue;
-                    long amtRemaining = Math.min(extractStack.getAmount(), amtAllowedToRemove);
-                    extractStack.setAmount(amtRemaining);
-                }
-
-                if (extractorCardCache.exact) {
-                    if (extractChemicalStackExact(extractorCardCache, chemicalHandler, extractStack, entry.getKey()))
-                        return true;
+                    if (filterCount > 0) {
+                        long amtInInv = chemicalStack.getAmount();
+                        long amtAllowedToRemove = amtInInv - filterCount;
+                        if (amtAllowedToRemove > 0) {
+                            extractStack.setAmount(Math.min(extractStack.getAmount(), amtAllowedToRemove));
+                            if (extractorCardCache.exact) {
+                                if (extractChemicalStackExact(extractorCardCache, chemicalHandler, extractStack, entry.getKey())) {
+                                    extractorCardCache.currentSlot++;
+                                    return true;
+                                }
+                            } else {
+                                if (extractChemicalStack(extractorCardCache, chemicalHandler, extractStack, entry.getKey())) {
+                                    extractorCardCache.currentSlot++;
+                                    return true;
+                                }
+                            }
+                        }
+                    }
                 } else {
-                    if (extractChemicalStack(extractorCardCache, chemicalHandler, extractStack, entry.getKey()))
-                        return true;
+                    if (extractorCardCache.exact) {
+                        if (extractChemicalStackExact(extractorCardCache, chemicalHandler, extractStack, entry.getKey())) {
+                            extractorCardCache.currentSlot++;
+                            return true;
+                        }
+                    } else {
+                        if (extractChemicalStack(extractorCardCache, chemicalHandler, extractStack, entry.getKey())) {
+                            extractorCardCache.currentSlot++;
+                            return true;
+                        }
+                    }
                 }
             }
+
+            extractorCardCache.currentSlot++;
+            if (extractorCardCache.currentSlot >= tanks) {
+                extractorCardCache.currentSlot = 0;
+                return false;
+            }
+            return true; // Atomic op: checked one tank
         }
         return false;
     }
