@@ -92,6 +92,9 @@ public class MekanismCache {
             sensorCardCache.currentFilterIndex = 0;
         }
 
+        if (sensorCardCache.currentFilterIndex < 0 || sensorCardCache.currentFilterIndex >= filteredChemicals.size()) {
+            sensorCardCache.currentFilterIndex = 0;
+        }
         ChemicalStack<?> testStack = filteredChemicals.get(sensorCardCache.currentFilterIndex);
         boolean filterMatched = false;
 
@@ -309,6 +312,10 @@ public class MekanismCache {
             }
 
             int tank = extractorCardCache.currentSlot;
+            if (tank < 0 || tank >= tanks) {
+                extractorCardCache.currentSlot = 0;
+                continue;
+            }
             if (tank >= 27) {
                 throw new IllegalStateException("LaserIO incremental slot overflow");
             }

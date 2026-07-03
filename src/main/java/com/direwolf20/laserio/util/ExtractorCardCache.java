@@ -42,6 +42,19 @@ public class ExtractorCardCache extends BaseCardCache {
     }
     public TransferStep currentStep = TransferStep.SCAN_SLOTS;
 
+    public void resetSlotState() {
+        currentSlot = 0;
+        currentInserterIndex = 0;
+        currentInserterSlot = 0;
+        extractingStack = ItemStack.EMPTY;
+        extractingFluid = FluidStack.EMPTY;
+        currentTransferResult = new TransferResult();
+        cachedPossibleInserters = null;
+        currentResultIndex = 0;
+        currentFilterIndex = 0;
+        currentStep = TransferStep.SCAN_SLOTS;
+    }
+
     public ExtractorCardCache(Direction direction, ItemStack cardItem, int cardSlot, LaserNodeBE be) {
         super(direction, cardItem, cardSlot, be);
         switch(cardType) {
