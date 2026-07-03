@@ -434,11 +434,13 @@ public class LaserNodeBE extends BaseLaserBE {
                 if (currentSideIndex < 0 || currentSideIndex >= 6) {
                     currentSideIndex = 0;
                     currentPhase = Phase.PICK_SIDE;
+                    currentCard = null;
                 } else {
                     NodeSideCache nodeSideCache = nodeSideCaches[currentSideIndex];
                     int cardCount = nodeSideCache.extractorCardCaches.size();
                     if (cardCount == 0) {
                         currentPhase = Phase.PICK_SIDE;
+                        currentCard = null;
                     } else {
                         if (nodeSideCache.nextCardIndex < 0 || nodeSideCache.nextCardIndex >= cardCount) {
                             nodeSideCache.nextCardIndex = 0;
@@ -448,7 +450,12 @@ public class LaserNodeBE extends BaseLaserBE {
                         if (nodeSideCache.nextCardIndex >= cardCount) {
                             nodeSideCache.nextCardIndex = 0;
                         }
-                        currentPhase = currentCard instanceof SensorCardCache ? Phase.SENSE : Phase.TRANSFER;
+                        if (currentCard == null) {
+                            currentPhase = Phase.PICK_SIDE;
+                        } else {
+                            currentCard.resetSlotState(); // Ensure state is fresh when starting a card
+                            currentPhase = currentCard instanceof SensorCardCache ? Phase.SENSE : Phase.TRANSFER;
+                        }
                     }
                 }
                 didWork = true;
@@ -471,10 +478,7 @@ public class LaserNodeBE extends BaseLaserBE {
             case TRANSFER -> {
                 if (currentCard != null && currentCard.remainingSleep <= 0 && currentCard.enabled && !emptyCards.contains(currentCard)) {
                     didWork = incrementalTransfer(currentCard);
-                    if (didWork) {
-                        // Transfer logic will handle its own internal state and return true when an atomic op is done
-                        // If it finishes the whole card, it should set currentPhase = Phase.COMPLETE
-                    } else {
+                    if (!didWork) {
                         emptyCards.add(currentCard);
                         currentCard.remainingSleep = 5;
                         currentPhase = Phase.COMPLETE;
@@ -484,6 +488,9 @@ public class LaserNodeBE extends BaseLaserBE {
                 }
             }
             case COMPLETE -> {
+                if (currentCard != null) {
+                    currentCard.resetSlotState();
+                }
                 currentPhase = Phase.PICK_SIDE;
                 didWork = true;
             }
@@ -846,7 +853,8 @@ public class LaserNodeBE extends BaseLaserBE {
     }
 
     public boolean extractItem(ExtractorCardCache extractorCardCache, IItemHandler fromInventory, ItemStack extractStack, int startSlot) {
-        if (startSlot < 0 || startSlot >= fromInventory.getSlots()) {
+        int fromSlots = fromInventory.getSlots();
+        if (startSlot < 0 || startSlot >= fromSlots) {
             extractorCardCache.currentSlot = 0;
             return false;
         }
@@ -870,12 +878,17 @@ public class LaserNodeBE extends BaseLaserBE {
 
             extractorCardCache.currentStep = ExtractorCardCache.TransferStep.SCAN_INSERTERS;
             extractorCardCache.currentInserterIndex = 0;
+            extractorCardCache.currentInserterSlot = 0;
             extractorCardCache.cachedPossibleInserters = null;
             return true; // One atomic op: slot check + fake extract
         }
 
         if (extractorCardCache.currentStep == ExtractorCardCache.TransferStep.SCAN_INSERTERS) {
             if (extractorCardCache.cachedPossibleInserters == null) {
+                if (extractorCardCache.extractingStack == null || extractorCardCache.extractingStack.isEmpty()) {
+                    extractorCardCache.currentStep = ExtractorCardCache.TransferStep.SCAN_SLOTS;
+                    return false;
+                }
                 List<InserterCardCache> inserterCardCaches = getPossibleInserters(extractorCardCache, extractorCardCache.extractingStack);
                 if (extractorCardCache.roundRobin != 0) {
                     int roundRobin = getRR(extractorCardCache);
@@ -967,20 +980,26 @@ public class LaserNodeBE extends BaseLaserBE {
                 // Find and perform extractions for this insertion
                 for (TransferResult.Result extRes : extractorCardCache.currentTransferResult.results) {
                     if (extRes.extractHandler != null && extRes.itemStack.getCount() > 0) {
-                        int taking = Math.min(amtNeeded, extRes.itemStack.getCount());
-                        extRes.extractHandler.extractItem(extRes.extractSlot, taking, false);
-                        extRes.itemStack.shrink(taking);
-                        amtNeeded -= taking;
+                        int extSlots = extRes.extractHandler.getSlots();
+                        if (extRes.extractSlot >= 0 && extRes.extractSlot < extSlots) {
+                            int taking = Math.min(amtNeeded, extRes.itemStack.getCount());
+                            extRes.extractHandler.extractItem(extRes.extractSlot, taking, false);
+                            extRes.itemStack.shrink(taking);
+                            amtNeeded -= taking;
+                        }
                         if (amtNeeded == 0) break;
                     }
                 }
 
-                res.insertHandler.insertItem(res.insertSlot, res.itemStack, false);
-                if (res.toBE != null) {
-                    LaserScheduler.requestWakeUp(res.toBE);
-                }
-                if (res.inserterCardCache != null) {
-                    drawParticles(res.itemStack, extractorCardCache.direction, this, res.toBE, res.inserterCardCache.direction, extractorCardCache.cardSlot, res.inserterCardCache.cardSlot);
+                int insSlots = res.insertHandler.getSlots();
+                if (res.insertSlot >= 0 && res.insertSlot < insSlots) {
+                    res.insertHandler.insertItem(res.insertSlot, res.itemStack, false);
+                    if (res.toBE != null) {
+                        LaserScheduler.requestWakeUp(res.toBE);
+                    }
+                    if (res.inserterCardCache != null) {
+                        drawParticles(res.itemStack, extractorCardCache.direction, this, res.toBE, res.inserterCardCache.direction, extractorCardCache.cardSlot, res.inserterCardCache.cardSlot);
+                    }
                 }
             }
 
@@ -1026,7 +1045,10 @@ public class LaserNodeBE extends BaseLaserBE {
         boolean filterMatched = false;
         List<ItemStack> filteredItemsList = sensorCardCache.filteredItems;
 
-        if (filteredItemsList.isEmpty()) return false;
+        if (filteredItemsList.isEmpty()) {
+            updateRedstoneFromSensor(false, sensorCardCache.redstoneChannel, nodeSideCache);
+            return false;
+        }
 
         // Atomic sensing: check ONE item from the filter
         int filterSize = filteredItemsList.size();
@@ -1075,7 +1097,10 @@ public class LaserNodeBE extends BaseLaserBE {
         }
 
         List<FluidStack> filteredFluids = sensorCardCache.getFilteredFluids();
-        if (filteredFluids.isEmpty()) return false;
+        if (filteredFluids.isEmpty()) {
+            updateRedstoneFromSensor(false, sensorCardCache.redstoneChannel, nodeSideCache);
+            return false;
+        }
 
         int filterSize = filteredFluids.size();
         if (sensorCardCache.currentFilterIndex < 0 || sensorCardCache.currentFilterIndex >= filterSize) {
@@ -1513,6 +1538,10 @@ public class LaserNodeBE extends BaseLaserBE {
         }
 
         if (extractorCardCache.currentStep == ExtractorCardCache.TransferStep.SCAN_INSERTERS) {
+            if (extractorCardCache.cachedPossibleInserters == null) {
+                extractorCardCache.currentStep = ExtractorCardCache.TransferStep.SCAN_SLOTS;
+                return false;
+            }
             int inserterCount = extractorCardCache.cachedPossibleInserters.size();
             if (extractorCardCache.currentInserterIndex < 0 || extractorCardCache.currentInserterIndex >= inserterCount) {
                 extractorCardCache.currentInserterIndex = 0;
@@ -1783,7 +1812,7 @@ public class LaserNodeBE extends BaseLaserBE {
 
         if (stockerCardCache.currentStep == ExtractorCardCache.TransferStep.REGULATE) {
             List<ItemStack> filteredItems = stockerCardCache.getFilteredItems();
-            if (stockerCardCache.currentFilterIndex >= filteredItems.size()) {
+            if (stockerCardCache.currentFilterIndex < 0 || stockerCardCache.currentFilterIndex >= filteredItems.size()) {
                 stockerCardCache.currentStep = ExtractorCardCache.TransferStep.SCAN_FILTER;
                 stockerCardCache.currentFilterIndex = 0;
                 return true;
@@ -1806,7 +1835,6 @@ public class LaserNodeBE extends BaseLaserBE {
             if (stockerCardCache.currentFilterIndex < 0 || stockerCardCache.currentFilterIndex >= filterSize) {
                 stockerCardCache.currentFilterIndex = 0;
                 stockerCardCache.currentStep = ExtractorCardCache.TransferStep.SCAN_SLOTS;
-                stockerCardCache.currentFilterIndex = 0;
                 return false; // Done scanning all filters
             }
             ItemStack itemStack = filteredItems.get(stockerCardCache.currentFilterIndex);
@@ -1865,6 +1893,7 @@ public class LaserNodeBE extends BaseLaserBE {
 
             stockerCardCache.currentStep = ExtractorCardCache.TransferStep.SCAN_INSERTERS;
             stockerCardCache.currentInserterIndex = 0;
+            stockerCardCache.currentInserterSlot = 0;
             stockerCardCache.cachedPossibleInserters = null;
             stockerCardCache.currentTransferResult = new TransferResult();
             return true;
@@ -1872,25 +1901,26 @@ public class LaserNodeBE extends BaseLaserBE {
 
         if (stockerCardCache.currentStep == ExtractorCardCache.TransferStep.SCAN_INSERTERS) {
             if (stockerCardCache.cachedPossibleInserters == null) {
+                if (stockerCardCache.extractingStack == null || stockerCardCache.extractingStack.isEmpty()) {
+                    stockerCardCache.currentStep = ExtractorCardCache.TransferStep.SCAN_FILTER;
+                    return false;
+                }
                 stockerCardCache.cachedPossibleInserters = getChannelMatchInserters(stockerCardCache);
             }
 
-            if (stockerCardCache.currentInserterIndex >= stockerCardCache.cachedPossibleInserters.size()) {
+            int inserterCount = stockerCardCache.cachedPossibleInserters.size();
+            if (stockerCardCache.currentInserterIndex < 0 || stockerCardCache.currentInserterIndex >= inserterCount) {
+                stockerCardCache.currentInserterIndex = 0;
                 int totalFound = stockerCardCache.currentTransferResult.getTotalItemCounts();
                 if (totalFound > 0 && (!stockerCardCache.exact || totalFound >= stockerCardCache.extractingStack.getCount())) {
                     stockerCardCache.currentStep = ExtractorCardCache.TransferStep.EXECUTE_TRANSFER;
+                    stockerCardCache.currentResultIndex = 0;
                     return true;
                 }
                 stockerCardCache.currentStep = ExtractorCardCache.TransferStep.SCAN_FILTER;
                 return false;
             }
 
-            int inserterCount = stockerCardCache.cachedPossibleInserters.size();
-            if (stockerCardCache.currentInserterIndex < 0 || stockerCardCache.currentInserterIndex >= inserterCount) {
-                stockerCardCache.currentInserterIndex = 0;
-                stockerCardCache.currentStep = ExtractorCardCache.TransferStep.SCAN_FILTER;
-                return false;
-            }
             InserterCardCache inserterCardCache = stockerCardCache.cachedPossibleInserters.get(stockerCardCache.currentInserterIndex);
             if (inserterCardCache.isStackValidForCard(stockerCardCache.extractingStack)) {
                 LaserNodeItemHandler laserNodeItemHandler = getLaserNodeHandlerItem(inserterCardCache);
@@ -1943,12 +1973,15 @@ public class LaserNodeBE extends BaseLaserBE {
             int totalToMove = canFit;
             for (TransferResult.Result res : stockerCardCache.currentTransferResult.results) {
                 int taking = Math.min(totalToMove, res.itemStack.getCount());
-                ItemStack moved = res.extractHandler.extractItem(res.extractSlot, taking, false);
-                ItemHandlerHelper.insertItem(stockerInventory, moved, false);
-                if (res.fromBE != null) {
-                    LaserScheduler.requestWakeUp(res.fromBE);
+                int extSlots = res.extractHandler.getSlots();
+                if (res.extractSlot >= 0 && res.extractSlot < extSlots) {
+                    ItemStack moved = res.extractHandler.extractItem(res.extractSlot, taking, false);
+                    ItemHandlerHelper.insertItem(stockerInventory, moved, false);
+                    if (res.fromBE != null) {
+                        LaserScheduler.requestWakeUp(res.fromBE);
+                    }
+                    totalToMove -= moved.getCount();
                 }
-                totalToMove -= moved.getCount();
                 if (totalToMove <= 0) break;
             }
 
@@ -1962,6 +1995,8 @@ public class LaserNodeBE extends BaseLaserBE {
     public ItemStack getStackAtStockerCachePosition(StockerSource checkSource) {
         LaserNodeItemHandler laserNodeItemHandler = getLaserNodeHandlerItem(checkSource.inserterCardCache);
         if (laserNodeItemHandler == null) return ItemStack.EMPTY;
+        int slots = laserNodeItemHandler.handler.getSlots();
+        if (checkSource.slot < 0 || checkSource.slot >= slots) return ItemStack.EMPTY;
         return laserNodeItemHandler.handler.getStackInSlot(checkSource.slot);
     }
 
@@ -2007,8 +2042,11 @@ public class LaserNodeBE extends BaseLaserBE {
         extractResult.addOtherCard(stockerInventory, -1, stockerCardCache, stockerCardCache.be);
         if (!extractResult.results.isEmpty()) { //If we found something, check if the last slot we looked at is empty, and add it to the cache
             int lastSlot = extractResult.results.get(extractResult.results.size() - 1).extractSlot; //The last slot we pulled from in this inventory
-            if (laserNodeItemHandler.handler.getStackInSlot(lastSlot).getCount() - extractResult.results.get(extractResult.results.size() - 1).itemStack.getCount() != 0) { //If its not empty now
-                stockerDestinationCache.put(new StockerRequest(stockerCardCache, itemStackKey), new StockerSource(checkSource.inserterCardCache, lastSlot)); //Add to the cache
+            int slots = laserNodeItemHandler.handler.getSlots();
+            if (lastSlot >= 0 && lastSlot < slots) {
+                if (laserNodeItemHandler.handler.getStackInSlot(lastSlot).getCount() - extractResult.results.get(extractResult.results.size() - 1).itemStack.getCount() != 0) { //If its not empty now
+                    stockerDestinationCache.put(new StockerRequest(stockerCardCache, itemStackKey), new StockerSource(checkSource.inserterCardCache, lastSlot)); //Add to the cache
+                }
             }
         }
         return extractResult;
