@@ -24,15 +24,22 @@ import java.util.Map;
 public class MekanismCardCache {
     public final BaseCardCache baseCardCache;
     public final List<ChemicalStack<?>> filteredChemicals;
+    public final List<ChemicalStackKey> filteredChemicalsKeys;
     public final Map<ChemicalStackKey, Boolean> filterCacheChemical = new Object2BooleanOpenHashMap<>();
     public final Map<ChemicalStackKey, Integer> filterCountsChemical = new Object2IntOpenHashMap<>();
+    private final ChemicalStackKey lookupKey = new ChemicalStackKey();
 
     public MekanismCardCache(BaseCardCache baseCardCache) {
         this.baseCardCache = baseCardCache;
         if (this.baseCardCache.filterCard.isEmpty()) {
             filteredChemicals = new ArrayList<>();
+            filteredChemicalsKeys = new ArrayList<>();
         } else {
             this.filteredChemicals = getFilteredChemicals();
+            this.filteredChemicalsKeys = new ArrayList<>();
+            for (ChemicalStack<?> stack : filteredChemicals) {
+                filteredChemicalsKeys.add(new ChemicalStackKey(stack));
+            }
         }
     }
 
@@ -66,11 +73,15 @@ public class MekanismCardCache {
     public boolean isStackValidForCard(ChemicalStack<?> testStack) {
         ItemStack filterCard = baseCardCache.filterCard;
         if (filterCard.isEmpty()) return true; //If theres no filter in the card
-        ChemicalStackKey key = new ChemicalStackKey(testStack);
-        if (filterCacheChemical.containsKey(key)) return filterCacheChemical.get(key);
+        lookupKey.set(testStack);
+        Boolean cachedResult = filterCacheChemical.get(lookupKey);
+        if (cachedResult != null) return cachedResult;
+
         if (filterCard.getItem() instanceof FilterMod) {
+            String modId = testStack.getTypeRegistryName().getNamespace();
             for (ChemicalStack<?> stack : filteredChemicals) {
-                if (stack.getTypeRegistryName().getNamespace().equals(testStack.getTypeRegistryName().getNamespace())) {
+                if (stack.getTypeRegistryName().getNamespace().equals(modId)) {
+                    ChemicalStackKey key = new ChemicalStackKey(testStack);
                     filterCacheChemical.put(key, baseCardCache.isAllowList);
                     return baseCardCache.isAllowList;
                 }
@@ -79,18 +90,21 @@ public class MekanismCardCache {
             for (TagKey<?> tagKey : testStack.getType().getTags().toList()) {
                 String tag = tagKey.location().toString().toLowerCase(Locale.ROOT);
                 if (baseCardCache.filterTags.contains(tag)) {
+                    ChemicalStackKey key = new ChemicalStackKey(testStack);
                     filterCacheChemical.put(key, baseCardCache.isAllowList);
                     return baseCardCache.isAllowList;
                 }
             }
         } else {
-            for (ChemicalStack<?> stack : filteredChemicals) {
-                if (key.equals(new ChemicalStackKey(stack))) {
+            for (ChemicalStackKey keyInFilter : filteredChemicalsKeys) {
+                if (keyInFilter.equals(lookupKey)) {
+                    ChemicalStackKey key = new ChemicalStackKey(testStack);
                     filterCacheChemical.put(key, baseCardCache.isAllowList);
                     return baseCardCache.isAllowList;
                 }
             }
         }
+        ChemicalStackKey key = new ChemicalStackKey(testStack);
         filterCacheChemical.put(key, !baseCardCache.isAllowList);
         return !baseCardCache.isAllowList;
     }
@@ -102,9 +116,10 @@ public class MekanismCardCache {
         if (!(filterCard.getItem() instanceof FilterCount)) { //If this is a basic or tag Card return -1 which will mean infinite amount
             return -1;
         }
-        ChemicalStackKey key = new ChemicalStackKey(testStack);
-        if (filterCountsChemical.containsKey(key)) //If we've already tested this, get it from the cache
-            return filterCountsChemical.get(key);
+        lookupKey.set(testStack);
+        Integer cachedCount = filterCountsChemical.get(lookupKey);
+        if (cachedCount != null) //If we've already tested this, get it from the cache
+            return cachedCount;
 
         FilterCountHandler filterSlotHandler = FilterCount.getInventory(filterCard);
         for (int i = 0; i < filterSlotHandler.getSlots(); i++) { //Gotta iterate the card's NBT because of the way we store amounts (in the MBAmt tag)
@@ -112,14 +127,17 @@ public class MekanismCardCache {
             if (!itemStack.isEmpty()) {
                 ChemicalStack<?> chemicalStack = MekanismStatics.getFirstChemicalOnItemStack(itemStack);
                 if (chemicalStack.isEmpty()) continue;
-                if (key.equals(new ChemicalStackKey(chemicalStack))) {
+                ChemicalStackKey innerLookup = new ChemicalStackKey();
+                if (innerLookup.set(chemicalStack).equals(lookupKey)) {
                     int mbAmt = FilterCount.getSlotAmount(filterCard, i);
+                    ChemicalStackKey key = new ChemicalStackKey(testStack);
                     filterCountsChemical.put(key, mbAmt);
                     return mbAmt;
                 }
 
             }
         }
+        ChemicalStackKey key = new ChemicalStackKey(testStack);
         filterCountsChemical.put(key, 0);
         return 0; //Should never get here in theory
     }

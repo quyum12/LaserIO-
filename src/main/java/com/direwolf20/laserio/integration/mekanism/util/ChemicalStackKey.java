@@ -6,12 +6,20 @@ import mekanism.api.chemical.ChemicalStack;
 import java.util.Objects;
 
 public class ChemicalStackKey {
-    public final Chemical<?> chemical;
-    private final int hash;
+    public Chemical<?> chemical;
+    private int hash;
 
     public ChemicalStackKey(ChemicalStack<?> stack) {
         this.chemical = stack.getType().getChemical();
         this.hash = Objects.hash(chemical);
+    }
+
+    public ChemicalStackKey() {}
+
+    public ChemicalStackKey set(ChemicalStack<?> stack) {
+        this.chemical = stack.getType().getChemical();
+        this.hash = Objects.hash(chemical);
+        return this;
     }
 
     @Override
@@ -21,8 +29,8 @@ public class ChemicalStackKey {
 
     @Override
     public boolean equals(Object obj) {
-        if (obj instanceof ChemicalStackKey) {
-            return (((ChemicalStackKey) obj).chemical == this.chemical);
+        if (obj instanceof ChemicalStackKey other) {
+            return other.chemical == this.chemical;
         }
         return false;
     }
