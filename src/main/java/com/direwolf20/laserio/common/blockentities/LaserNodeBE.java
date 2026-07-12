@@ -714,12 +714,12 @@ public class LaserNodeBE extends BaseLaserBE {
         return list;
     }
 
-    public boolean extractItem(ExtractorCardCache extractorCardCache, IItemHandler fromInventory, ItemStack extractStack, int startSlot) {
+    public int extractItem(ExtractorCardCache extractorCardCache, IItemHandler fromInventory, ItemStack extractStack, int startSlot) {
         TransferResult extractResults = (ItemHandlerUtil.extractItemWithSlots(this, fromInventory, extractStack, extractStack.getCount(), true, true, extractorCardCache, startSlot)); //Fake Extract
         int amtNeeded = extractResults.getTotalItemCounts();
         boolean exactMode = extractorCardCache.exact;
         if (amtNeeded != extractorCardCache.extractAmt && exactMode) //Return if we didn't get what we needed and we are in exact mode
-            return false;
+            return 0;
         extractStack.setCount(amtNeeded);
         TransferResult insertResults = new TransferResult();
         List<InserterCardCache> inserterCardCaches = getPossibleInserters(extractorCardCache, extractStack);
@@ -739,7 +739,7 @@ public class LaserNodeBE extends BaseLaserBE {
             }
             TransferResult thisResult = ItemHandlerUtil.insertItemWithSlots(laserNodeItemHandler.be, laserNodeItemHandler.handler, extractStack, 0, true, extractorCardCache.isCompareNBT, true, inserterCardCache); //Test!!
             if (extractorCardCache.roundRobin == 2 && thisResult.getTotalItemCounts() < amtStillNeeded) {
-                return false;
+                return 0;
             }
             if (thisResult.results.isEmpty()) { //Next inserter if nothing went in -- return false if enforcing round robin
                 getNextRR(extractorCardCache, inserterCardCaches);
@@ -757,10 +757,11 @@ public class LaserNodeBE extends BaseLaserBE {
         }
 
         if (amtStillNeeded == amtNeeded || (amtStillNeeded != 0 && exactMode)) {
-            return false; //If we are in exact mode, make sure we fit exactly what we need, otherwise see if we fit anything
+            return 0; //If we are in exact mode, make sure we fit exactly what we need, otherwise see if we fit anything
         }
         //If we get to this point, it means we can insert all the itemstacks we wanted to, so lets do it for realsies
-        extractStack.setCount(amtNeeded - amtStillNeeded); //Set back to how many we actually need
+        int actualCount = amtNeeded - amtStillNeeded;
+        extractStack.setCount(actualCount); //Set back to how many we actually need
         for (TransferResult.Result result : insertResults.results) {
             ItemStack tempStack = extractStack.split(result.itemStack.getCount());
             ItemStack returnedStack = result.insertHandler.insertItem(result.insertSlot, tempStack, true);
@@ -790,7 +791,7 @@ public class LaserNodeBE extends BaseLaserBE {
         if (extractorCardCache.roundRobin != 0) {
             getNextRR(extractorCardCache, inserterCardCaches);
         }
-        return true;
+        return actualCount;
     }
 
     public boolean updateRedstoneFromSensor(boolean filterMatched, byte redstoneChannel, NodeSideCache nodeSideCache) {
@@ -1091,8 +1092,9 @@ public class LaserNodeBE extends BaseLaserBE {
                 extractStack.setCount(amtRemaining);
             }
             if (extractStack.isEmpty()) continue;
-            if (extractItem(extractorCardCache, adjacentInventory, extractStack, slot)) {
-                totalItemsMoved += extractStack.getCount();
+            int moved = extractItem(extractorCardCache, adjacentInventory, extractStack, slot);
+            if (moved > 0) {
+                totalItemsMoved += moved;
                 movedAny = true;
             }
             if (totalItemsMoved >= maxItems) break;
@@ -1495,7 +1497,7 @@ public class LaserNodeBE extends BaseLaserBE {
             if (amtHad > itemStack.getCount()) { //if we have enough, move onto the next stack after removing this one from the list
                 ItemStack extractStack = itemStack.copy();
                 extractStack.setCount(Math.min(amtHad - itemStack.getCount(), stockerCardCache.extractAmt));
-                if (extractItem(stockerCardCache, stockerInventory, extractStack, 0)) {
+                if (extractItem(stockerCardCache, stockerInventory, extractStack, 0) > 0) {
                     return true;
                 }
             }
